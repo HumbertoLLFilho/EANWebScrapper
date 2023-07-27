@@ -13,7 +13,7 @@ rootPath = jsonData["Paths"]["root"]
 
 eans = []
 descriptions=[]
-eanFilePath = rootPath + "\\ListaDeEANs.csv"
+eanFilePath = rootPath + "\\ListaDeEANsTest.csv"
 
 with open(eanFilePath, newline='', encoding='utf-8') as file:
     line = 0
