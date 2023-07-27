@@ -46,14 +46,17 @@ for ean in eans:
     soup = BeautifulSoup(driver.page_source, 'html.parser', from_encoding="utf-8")
     
     span = soup.find('h1', {"class" : "page-header"})
+    descriptionText = ''
     if(span is not None):
         cleanText = span.text.replace(';',',').replace('\n','')
 
-        description["EAN"] = ean
-        description["DESCRIPTION"] = cleanText[:cleanText.index("GTIN")]
-
-        descriptions.append(description)
+        descriptionText = cleanText[:cleanText.index("GTIN")]
+    else:
+        descriptionText = "Não encontrado"
     
+    description["EAN"] = ean
+    description["DESCRIPTION"] = descriptionText
+    descriptions.append(description)
     print(f"Ean salvo: {ean}")
 
 driver.close()
