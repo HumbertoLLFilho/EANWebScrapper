@@ -11,48 +11,61 @@ import csv
 import FileHelper
 
 
-def find_banks(driver: ChromiumDriver):
+def find_all_banks(driver:ChromiumDriver):
+    banks:list[Banco] = []
+
+    banks.append(find_featured_banks(driver))
+    banks.append(find_other_banks(driver))
+
+    return banks
+
+#tile Promociones bancarias
+def find_other_banks(driver: ChromiumDriver):
+    banks: list[Banco] = []
+
+    wait = WebDriverWait(driver, 10)
+    wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'a[title="Promociones bancarias"]'))).click()
+
+    payment_div = driver.find_elements(By.CLASS_NAME, "pm-list")
+
+    if(payment_div):
+        payment_li = payment_div[0].find_elements(By.TAG_NAME, "li")
+
+        for payment in payment_li:
+            payment.click()
+
+            banks_li = driver.find_element(By.ID, "banks").find_elements(By.TAG_NAME,"option")
+
+            for bank in banks_li:
+                name = bank.text
+
+                
+
+
+
+    return banks
+
+
+
+
+def find_featured_banks(driver):
+    banks: list[Banco] = []
+
     banks_div = driver.find_elements(By.ID, "featured-offers-container")
 
-
-
-
-
-
-def find_banks(soup: BeautifulSoup):    
-    bancos: list[Banco] = []
-
-    banks_div = soup.find("div", {"id", "featured-offers-container"})
-
-    banks_li = banks_div.select("[data-promotion-id]")
-
-    if(banks_li.__len__() == 0):
-        no_banks_listed = True
-        i = 0
-        while(no_banks_listed):
-            time.sleep(0.5)
-            banks_div = soup.find("div", {"id", "featured-offers-container"})
-            banks_li = banks_div.select("[data-promotion-id]")
+    if(banks_div.__len__() != 0):
+        banks_li = banks_div[0].find_elements(By.TAG_NAME, "li")
+        
+        for bank_info in banks_li:
+            promotion = bank_info.find_element(By.CLASS_NAME, "promo-note").text
+            name = bank_info.find_element(By.CSS_SELECTOR, "img").get_attribute("alt")
+            price = bank_info.find_element(By.CLASS_NAME, "promo-amount").text
             
-            if(banks_li.__len__() != 0 or i > 100):
-                no_banks_listed = False
+            banks.append(Banco(name, promotion, price))
 
-            i = i+1
+    return banks
 
-    for bank_info in banks_li:
-        promotion = bank_info.find_next("span", {"class", "promo-note"})
-        name = bank_info.find_next("img")
-        price = bank_info.find_next("span", {"class", "promo-amount"})
-
-        bancos.append(Banco(name.attrs.get("alt"), promotion.text, price.text))
-
-    return bancos
-
-def findPrice(soup: BeautifulSoup):
-    priceText = ''
-
-    classs = {"": ""}
-
+def find_price(soup: BeautifulSoup):
     prices_div = soup.find("div", {"class" : "promotion-default"})
 
     price = ''
@@ -96,14 +109,15 @@ for detail in details:
         if(driver.find_elements(By.ID, "btnNoIdWpnPush")):
             wait.until(EC.element_to_be_clickable((By.ID, 'btnNoIdWpnPush'))).click()
 
-        price, past_price = findPrice(soup)
-        top_banks = find_banks(soup)
+        price, past_price = find_price(soup)
+        top_banks = find_featured_banks(driver)
 
         description["Codigo"] = detail.codigo
         description["EAN"] = detail.ean
         description["Detalhe"] = detail.detalhe
         description["Marca"] = detail.marca
         description["Link consultado"] = detail.link
+
         description["Preço"] = price
         description["Preço antigo"] = past_price
 
