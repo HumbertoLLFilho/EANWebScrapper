@@ -1,69 +1,88 @@
-import time
-from bs4 import BeautifulSoup
-from selenium import webdriver
 from selenium.webdriver.chromium.webdriver import ChromiumDriver
-from Models.Banco import Banco
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import Select
+from selenium.webdriver.support.wait import WebDriverWait
+from selenium.webdriver.common.by import By
+from Models.Installment import Installment
+from Models.Product import Product
+from FileHelper import FileHelper
+from selenium import webdriver
+from bs4 import BeautifulSoup
+from Models.Bank import Bank
+from Models.Card import Card
+import pandas as pd
+import time
 
-import csv
-import FileHelper
+file_helper = FileHelper()
 
+rootPath = file_helper.getPathFromAppsettings()
+eanFilePath = rootPath + "\\Detalhes_produtos.csv"
 
-def find_all_banks(driver:ChromiumDriver):
-    banks:list[Banco] = []
+products:list[Product]=[]
+installments:list[Installment]=[]
+banks_db:list[Bank]= []
+cards_db:list[Card]= []
 
-    banks.append(find_featured_banks(driver))
-    banks.append(find_other_banks(driver))
-
-    return banks
-
-#tile Promociones bancarias
-def find_other_banks(driver: ChromiumDriver):
-    banks: list[Banco] = []
+def find_all_installments(driver: ChromiumDriver, product: Product):
+    installments: list[Installment] = []
 
     wait = WebDriverWait(driver, 10)
-    wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'a[title="Promociones bancarias"]'))).click()
 
-    payment_div = driver.find_elements(By.CLASS_NAME, "pm-list")
+    a_banks_promotions = driver.find_element(By.CSS_SELECTOR, 'a[title="Promociones bancarias"]')
+    h4_banks_promotions = a_banks_promotions.find_element(By.TAG_NAME,"h4")
 
-    if(payment_div):
-        payment_li = payment_div[0].find_elements(By.TAG_NAME, "li")
+    wait.until(EC.element_to_be_clickable(h4_banks_promotions)).click()
 
-        for payment in payment_li:
-            payment.click()
+    cards_modal = driver.find_element(By.ID, "modal-installments-calculator")
+    card_div = cards_modal.find_elements(By.CLASS_NAME, "payment-methods")
 
-            banks_li = driver.find_element(By.ID, "banks").find_elements(By.TAG_NAME,"option")
+    if(card_div):
+        card_li = card_div[0].find_elements(By.TAG_NAME, "li")
 
-            for bank in banks_li:
-                name = bank.text
+        for card_element in card_li:
+            wait.until(EC.element_to_be_clickable(card_element)).click()
 
+            card_name = card_element.find_element(By.TAG_NAME, "img").get_attribute("alt")
+
+            banks_div = driver.find_element(By.ID, "banks")
+            banks_select = Select(banks_div)
+            banks_options = banks_div.find_elements(By.TAG_NAME,"option")
+
+            for bank_web_element in banks_options:
+                bank_name = bank_web_element.text
+                banks_select.select_by_visible_text(bank_name)
+
+                bank = next((x for x in banks_db if x.name == bank_name), None)
+                if(bank == None):
+                    bank = Bank(bank_name)
+
+                    banks_db.append(bank)
                 
+                card = next((x for x in cards_db if x.name == card_name and x.bank_id == bank.id), None)
+                if(card == None):
+                    card = Card(bank.id, card_name, bank)
 
+                    cards_db.append(card)
 
+                installments_div = cards_modal.find_elements(By.CLASS_NAME, "installment")
 
-    return banks
+                for installment_element in installments_div:
+                    strong = installment_element.find_element(By.TAG_NAME, "strong").text
 
+                    installment_quantity = strong.split(' ')[0]
+                    installment_price = strong.partition("$")[2].split(' ')[0].replace(".","")
+                    
+                    refound_porcentage = strong.partition("+ ")[2].partition("%")[0]
+                    if(refound_porcentage == ""):
+                        refound_porcentage = 0
+                    
+                    is_interest_free = "sin interés" in strong
 
+                    installment = Installment(product.id, card.id, installment_quantity, installment_price, refound_porcentage, is_interest_free, card, product)
 
+                    installments.append(installment)
 
-def find_featured_banks(driver):
-    banks: list[Banco] = []
-
-    banks_div = driver.find_elements(By.ID, "featured-offers-container")
-
-    if(banks_div.__len__() != 0):
-        banks_li = banks_div[0].find_elements(By.TAG_NAME, "li")
-        
-        for bank_info in banks_li:
-            promotion = bank_info.find_element(By.CLASS_NAME, "promo-note").text
-            name = bank_info.find_element(By.CSS_SELECTOR, "img").get_attribute("alt")
-            price = bank_info.find_element(By.CLASS_NAME, "promo-amount").text
-            
-            banks.append(Banco(name, promotion, price))
-
-    return banks
+    return installments
 
 def find_price(soup: BeautifulSoup):
     prices_div = soup.find("div", {"class" : "promotion-default"})
@@ -80,13 +99,9 @@ def find_price(soup: BeautifulSoup):
         if(past_price_span is not None):
             past_price = past_price_span.text
 
-    return price, past_price
+    return price.replace("$", "").replace(".",""), past_price.replace("$", "").replace(".","")
 
-rootPath = FileHelper.getPathFromAppsettings()
-descriptions=[]
-eanFilePath = rootPath + "\\Detalhes_produtos.csv"
-
-details = FileHelper.OpenAndReadEansFile(eanFilePath)
+details = file_helper.OpenAndReadEansFile(eanFilePath)
 
 # Set up the browser
 options = webdriver.ChromeOptions()
@@ -94,9 +109,12 @@ options = webdriver.ChromeOptions()
 driver = webdriver.Chrome(options=options)
 
 for detail in details:
-    description:dict[str,str] = {}
+    product: Product = None
+    extracted_installments = []
 
-    # Navigate to the website
+    price = 0
+    past_price = 0
+
     if(detail.link != ''):
         driver.get(detail.link)
 
@@ -110,38 +128,42 @@ for detail in details:
             wait.until(EC.element_to_be_clickable((By.ID, 'btnNoIdWpnPush'))).click()
 
         price, past_price = find_price(soup)
-        top_banks = find_featured_banks(driver)
 
-        description["Codigo"] = detail.codigo
-        description["EAN"] = detail.ean
-        description["Detalhe"] = detail.detalhe
-        description["Marca"] = detail.marca
-        description["Link consultado"] = detail.link
+        product = Product(detail.codigo, detail.ean, detail.detalhe, detail.marca, detail.link, past_price, price)
+        extracted_installments = find_all_installments(driver, product)
+    
+    if(product == None):
+        product = Product(detail.codigo, detail.ean, detail.detalhe, detail.marca, detail.link, past_price, price)
 
-        description["Preço"] = price
-        description["Preço antigo"] = past_price
-
-        description["banco 1 nome"] = top_banks[0].name
-        description["banco 1 parcelas"] = top_banks[0].installment
-        description["banco 1 preço"] = top_banks[0].price
-
-        description["banco 2 nome"] = top_banks[1].name
-        description["banco 2 parcelas"] = top_banks[1].installment
-        description["banco 2 preço"] = top_banks[1].price
-
-        description["banco 3 nome"] = top_banks[2].name
-        description["banco 3 parcelas"] = top_banks[2].installment
-        description["banco 3 preço"] = top_banks[2].price
-
-        descriptions.append(description)
-        print(f"Ean salvo: {detail.ean}")
+    products.append(product)
+    installments.extend(extracted_installments)
+    
+    print(f"Ean salvo: {detail.ean}")
 
 driver.close()
 
-filename = '\\EansComDescricao.csv'
-with open(rootPath+filename, 'w', newline='', encoding='utf-8') as file:
-    writer = csv.DictWriter(file, delimiter=";", fieldnames= description.keys())
-    writer.writeheader()
+products_dict: list[dict[str,str]] = [{}]
+for product in products:
+    products_dict.append(product.to_dict())
 
-    for description in descriptions:
-        writer.writerow(description)
+installments_dict: list[dict[str,str]] = [{}]
+for installment in installments:
+    installments_dict.append(installment.to_dict())
+    
+banks_dict: list[dict[str,str]] = [{}]
+for bank in banks_db:
+    banks_dict.append(bank.to_dict())
+    
+cards_dict: list[dict[str,str]] = [{}]
+for card in cards_db:
+    cards_dict.append(card.to_dict())
+
+products_df = pd.DataFrame(products_dict)
+installments_df = pd.DataFrame(installments_dict)
+banks_df = pd.DataFrame(banks_dict)
+cards_df = pd.DataFrame(cards_dict)
+
+file_helper.write_sheet(products_df, "Produtos")
+file_helper.append_sheet(installments_df, "parcelas")
+file_helper.append_sheet(banks_df, "bancos")
+file_helper.append_sheet(cards_df, "cartões")
